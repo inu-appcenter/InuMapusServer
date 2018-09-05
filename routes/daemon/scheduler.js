@@ -1,102 +1,109 @@
-var schedule = require('node-schedule');
-var mysql = require('mysql');
-var dbConfig = require('../config/dbConfig');
-var pool = mysql.createPool(dbConfig);
-const request = require('request')
-const cheerio = require('cheerio')
-var removeNewline = require('newline-remove')
-// var async = require("async");
-
+const schedule = require('node-schedule');
+const request = require('request');
+const cheerio = require('cheerio');
+const util = require('util');
+const removeNewline = require('newline-remove');
+const mysql = require('mysql');
+const dbConfig = require('../config/dbConfig');
+const urlToParse = 'http://www.inu.ac.kr/cop/haksaStaffSearch/staffSearchView.do?id=inu_011001000000&section=all&select1=&name=';
 
 const start = () => {
-    // console.log('cron start');
-    var scheduler = schedule.scheduleJob('00 * * * * *', () => {
-        // console.log('1. scheduler start!');
+  let scheduler = schedule.scheduleJob('00 00 */6 * * *', async () => {
+    console.log("crawling execute");
+    try{
+      let data = await crawlPhonebook();
+      if(data){
+        // for clean exit, pool release and connect inside.
+        let pool = mysql.createPool(dbConfig);
+        pool.query = util.promisify(pool.query);
 
-        pool.getConnection(async (connectionErr, connection) => {
-          if (connectionErr) {
-            // console.log("2. connectionErr!");
-            console.log(connectionErr);
-          } else {
-            // console.log("2. connection success!");
-            await connection.query("DELETE FROM employee", async function(deleteErr, results) {
-              if (deleteErr) {
-                // console.log("2. deleteErr!");
-                console.log(deleteErr);
-              } else {
-                // console.log("2. update success!");
-              }
-            })
-          }
-          connection.destroy();
-        });
+        // DO NOT DELETE FROM. It continuously increase id.
+        await pool.query('TRUNCATE employee');
+        await pool.query("INSERT INTO employee(organ,detailOrgan,position,name,mainWork,telephone,email) VALUES ?",[data]);
+        pool.end();
+      }
+    }
+    catch(error){
+      console.error("crawling error");
+      console.error(error);
+    } // end of try-catch
+  }) // end of scheduleJob
+}; // end of start
 
-        //console.log(employeeInfo);
+/**
+parse HTML from web
+@return requestResult
+*/
+async function crawlPhonebook(){
+  let resultArray = [];
+  let requestResult = null;
+  let count = 0;
+  try{
+    // util.promisify(request) causes escape letter encoding
+    requestResult = await doRequest(urlToParse);
+  }
+  catch (e){
+    console.error('requestError : ' + e);
+    return;
+  }
 
-        pool.getConnection(async (connectionErr, connection) => {
-            if (connectionErr) {
-              // console.log("4. connectionErr!");
-              console.log(connectionErr);
-            } else {
-              // console.log("4. connection success!");
-              // update employee http://www.inu.ac.kr/cop/haksaStaffSearch/staffSearchView.do?id=inu_011001000000&section=all&select1=&name=
-              request('http://www.inu.ac.kr/cop/haksaStaffSearch/staffSearchView.do?id=inu_011001000000&section=all&select1=&name=', (requestErr, response, body) => {
-                  if (requestErr) {
-                    // console.log("3. scheduler-requestError!");
-                    console.log(requestErr);
-                  } else {
-                    // console.log("3. scheduler-request success!");
+  if(!requestResult) return;
+  let $ = cheerio.load(requestResult);
 
-                    var $ = cheerio.load(body);
+  // each is synchronize function
+  $('#contents > div > div > table > tbody>tr').each(function(index, ele){
+    let organ, detail, position, name, mainwork, telephone, email;
+    organ = $(this).children().first();
+    detail = organ.next();
+    position = detail.next();
+    name = position.next();
+    mainwork = name.next();
+    telephone = mainwork.next();
+    email = $(telephone.next()).children().first().attr('href');
 
-                    $('#contents > div > div > table > tbody>tr').each(function(index, ele) {
-                      var organ, detail, position, name, mainwork, telephone, email;
-                        organ = $(this).children().first();
-                        detail = organ.next();
-                        position = detail.next();
-                        name = position.next();
-                        mainwork = name.next();
-                        telephone = mainwork.next();
-                        email = $(telephone.next()).children().first().attr('href');
+    // save as text
+    organ = organ.text();
+    detail = detail.text();
+    position = (removeNewline(position.text())).trim(); // remove '\n', space
+    name = name.text();
+    mainwork = mainwork.text();
+    telephone = telephone.text();
+    if (email) {
+      // if email is no undefiend
+      email = email.substr(7, email.length)
+    } else {
+      email = null;
+    }
 
-                        // save as text
-                        organ = organ.text();
-                        detail = detail.text();
-                        position = (removeNewline(position.text())).trim(); // remove '\n', space
-                        name = name.text();
-                        mainwork = mainwork.text();
-                        telephone = telephone.text();
-                        if (email) {
-                          // if email is no undefiend
-                          email = email.substr(7, email.length)
-                        } else {
-                          email = null;
-                        }
+    resultArray.push([organ, detail, position, name, mainwork, telephone, email]);
+  })
+  return resultArray;
+}
 
-                        // console.log('\t'+organ+' '+detail+' '+position+' '+name+' '+mainwork+' '+telephone+' '+email);
+/**
+* Make synchronized request
+* @param options for request
+* @return Promized request
+*/
+function doRequest(options) {
+  return new Promise(function (resolve, reject) {
+    request(options, function (error, res, body) {
+      if (!error && res.statusCode == 200) {
+        resolve(body);
+      } else {
+        reject(error);
+      }
+    });
+  });
+}
 
-                        // connection.query("INSERT INTO employee(organ,detailOrgan,position,name,mainWork,telephone,email) VALUES(?,?,?,?,?,?,?)",[organ, detail, position, name, mainwork, telephone, email], async (err,results)=>{
-                        //   if(err){
-                        //     console.log("insert err!");
-                        //     console.log(err);
-                        //   }else{
-                        //     console.log("insert success!");
-                        //     console.log('\t\t'+organ+' '+detail+' '+position+' '+name+' '+mainwork+' '+telephone+' '+email);
-                        //   }
-                        // })
+module.exports = {
+  start
+};
 
 
-                      }) // end of $.each
-                      connection.destroy();
-                    } // end of request-else
-                  })  // end of request
-                } // end of getConnection-else
-              })  //end of getConnection
-
-              // console.log("scheduleJob finished!");
-        }) // end of scheduleJob
-    }; // end of start
-
-    module.exports = {
-      start
-    };
+/**
+* testcode
+*/
+// crawlPhonebook().then(data=>console.log(data));
+// start();
