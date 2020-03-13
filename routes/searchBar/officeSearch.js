@@ -7,8 +7,8 @@ var buildingId = req.query.buildingId
 var floorId = req.query.floorId
 var title = req.query.title
 
-let sql = 'SELECT title, id, roomId FROM office WHERE buildingId=? AND floorId=? AND title LIKE'+'"%"'+'?'+'"%"'
-       db.query(sql, [buildingId,floorId,title],  function(err, results) {
+let sql = 'SELECT title, officeId, roomId FROM office WHERE title LIKE'+'"%"'+'?'+ '"%"' + 'AND buildingId=? AND floorId=?'
+       db.query(sql, [title,buildingId,floorId],  function(err, results) {
         if (err) {
           console.log(err);
           res.sendStatus(400)

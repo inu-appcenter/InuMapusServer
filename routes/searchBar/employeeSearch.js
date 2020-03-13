@@ -17,7 +17,7 @@ let sqlTel = 'SELECT name, detailOrgan, position, telephone FROM employee WHERE 
             res.status(200).json(results)
           }
         });
-       }else{
+       }else if(telephone){
          db.query(sqlTel,[telephone], function(err,rows){
            if(err){
              console.log(err)
